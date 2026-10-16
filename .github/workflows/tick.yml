@@ -14,13 +14,41 @@ jobs:
       - name: Call /admin/tick
         env:
           TICK_TOKEN: ${{ secrets.TICK_TOKEN }}
+          HC_PING_URL: ${{ secrets.HC_PING_URL }}
         run: |
-          code=$(curl -sS -o body.json -w '%{http_code}' -X POST \
+          set -u
+          ping() { [ -n "${HC_PING_URL:-}" ] && curl -fsS -m 10 --retry 3 -o /dev/null "$HC_PING_URL$1" || true; }
+          # No -L: any redirect (e.g. a moved domain) must fail loudly, not silently skip ticks.
+          code=$(curl -sS -o body.json -w '%{http_code} %{redirect_url}' -X POST \
             -H "Authorization: Bearer $TICK_TOKEN" \
-            --max-time 240 https://crawlwisedata.com/admin/tick)
+            --max-time 240 https://crawlwisedata.com/admin/tick) || code="curl_error"
           echo "HTTP $code"
-          jq -c '{ok, checked: (.checked // .results | length? // null), skipped: (.skipped // null)}' body.json || true
-          [ "$code" = "200" ] && jq -e '.ok == true' body.json >/dev/null
+          echo "--- tick response (first 4000 bytes) ---"
+          head -c 4000 body.json 2>/dev/null; echo
+          if [ "${code%% *}" = "200" ] && jq -e '.ok == true' body.json >/dev/null 2>&1; then
+            ping ""
+          else
+            echo "::error::Tick failed: HTTP $code"
+            ping "/fail"
+            exit 1
+          fi
+  alert-on-failure:
+    needs: tick
+    if: failure()
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    steps:
+      - name: Open or update scheduler-failure issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          title="Scheduler tick failing"
+          n=$(gh issue list -R "$GITHUB_REPOSITORY" --state open --search "\"$title\" in:title" --json number -q '.[0].number')
+          msg="Tick run failed at $(date -u +%FT%TZ) (${{ github.event_name }}): $RUN_URL"
+          if [ -n "$n" ]; then gh issue comment "$n" -R "$GITHUB_REPOSITORY" -b "$msg"
+          else gh issue create -R "$GITHUB_REPOSITORY" -t "$title" -b "$msg. Close this issue once ticks are green again."; fi
   keepalive:
     runs-on: ubuntu-latest
     if: github.event_name == 'schedule'
