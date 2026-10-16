@@ -17,7 +17,7 @@ jobs:
         run: |
           code=$(curl -sS -o body.json -w '%{http_code}' -X POST \
             -H "Authorization: Bearer $TICK_TOKEN" \
-            --max-time 240 https://crawlwise-data.netlify.app/admin/tick)
+            --max-time 240 https://crawlwisedata.com/admin/tick)
           echo "HTTP $code"
           jq -c '{ok, checked: (.checked // .results | length? // null), skipped: (.skipped // null)}' body.json || true
           [ "$code" = "200" ] && jq -e '.ok == true' body.json >/dev/null

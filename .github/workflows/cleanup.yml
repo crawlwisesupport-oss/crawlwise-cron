@@ -1,0 +1,23 @@
+name: daily-cleanup
+on:
+  schedule:
+    - cron: "17 9 * * *"   # daily, 09:17 UTC
+  workflow_dispatch: {}
+concurrency:
+  group: cleanup
+  cancel-in-progress: false
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Call /admin/cleanup (deletes expired data only)
+        env:
+          TICK_TOKEN: ${{ secrets.TICK_TOKEN }}
+        run: |
+          code=$(curl -sS -o body.json -w '%{http_code}' -X POST \
+            -H "Authorization: Bearer $TICK_TOKEN" \
+            --max-time 240 https://crawlwisedata.com/admin/cleanup)
+          echo "HTTP $code"
+          jq -c '{ok, removed}' body.json || true
+          [ "$code" = "200" ] && jq -e '.ok == true' body.json >/dev/null
